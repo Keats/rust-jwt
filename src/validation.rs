@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::map::Map;
-use serde_json::{from_value, Value};
+use serde_json::Value;
 
 use crate::algorithms::Algorithm;
 use crate::errors::{new_error, ErrorKind, Result};
@@ -49,18 +49,18 @@ pub struct Validation {
     ///
     /// Defaults to `None`.
     pub aud: Option<HashSet<String>>,
-    /// If it contains a value, the validation will check that the `iss` field is the same as the
-    /// one provided and will error otherwise.
+    /// If it contains a value, the validation will check that the `iss` field is a member of the
+    /// iss provided and will error otherwise.
     ///
     /// Defaults to `None`.
-    pub iss: Option<String>,
+    pub iss: Option<HashSet<String>>,
     /// If it contains a value, the validation will check that the `sub` field is the same as the
     /// one provided and will error otherwise.
     ///
     /// Defaults to `None`.
     pub sub: Option<String>,
-    /// If it contains a value, the validation will check that the `alg` of the header is contained
-    /// in the ones provided and will error otherwise.
+    /// The validation will check that the `alg` of the header is contained
+    /// in the ones provided and will error otherwise. Will error if it is empty.
     ///
     /// Defaults to `vec![Algorithm::HS256]`.
     pub algorithms: Vec<Algorithm>,
@@ -69,14 +69,17 @@ pub struct Validation {
 impl Validation {
     /// Create a default validation setup allowing the given alg
     pub fn new(alg: Algorithm) -> Validation {
-        let mut validation = Validation::default();
-        validation.algorithms = vec![alg];
-        validation
+        Validation { algorithms: vec![alg], ..Default::default() }
     }
 
     /// `aud` is a collection of one or more acceptable audience members
     pub fn set_audience<T: ToString>(&mut self, items: &[T]) {
         self.aud = Some(items.iter().map(|x| x.to_string()).collect())
+    }
+
+    /// `iss` is a collection of one or more acceptable iss members
+    pub fn set_iss<T: ToString>(&mut self, items: &[T]) {
+        self.iss = Some(items.iter().map(|x| x.to_string()).collect())
     }
 }
 
@@ -97,7 +100,8 @@ impl Default for Validation {
     }
 }
 
-fn get_current_timestamp() -> u64 {
+/// Gets the current timestamp in the format JWT expect
+pub fn get_current_timestamp() -> u64 {
     let start = SystemTime::now();
     start.duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs()
 }
@@ -107,7 +111,11 @@ pub fn validate(claims: &Map<String, Value>, options: &Validation) -> Result<()>
 
     if options.validate_exp {
         if let Some(exp) = claims.get("exp") {
-            if from_value::<u64>(exp.clone())? < now - options.leeway {
+            if let Some(exp) = exp.as_u64() {
+                if exp < now - options.leeway {
+                    return Err(new_error(ErrorKind::ExpiredSignature));
+                }
+            } else {
                 return Err(new_error(ErrorKind::ExpiredSignature));
             }
         } else {
@@ -117,7 +125,11 @@ pub fn validate(claims: &Map<String, Value>, options: &Validation) -> Result<()>
 
     if options.validate_nbf {
         if let Some(nbf) = claims.get("nbf") {
-            if from_value::<u64>(nbf.clone())? > now + options.leeway {
+            if let Some(nbf) = nbf.as_u64() {
+                if nbf > now + options.leeway {
+                    return Err(new_error(ErrorKind::ImmatureSignature));
+                }
+            } else {
                 return Err(new_error(ErrorKind::ImmatureSignature));
             }
         } else {
@@ -125,19 +137,9 @@ pub fn validate(claims: &Map<String, Value>, options: &Validation) -> Result<()>
         }
     }
 
-    if let Some(ref correct_iss) = options.iss {
-        if let Some(iss) = claims.get("iss") {
-            if from_value::<String>(iss.clone())? != *correct_iss {
-                return Err(new_error(ErrorKind::InvalidIssuer));
-            }
-        } else {
-            return Err(new_error(ErrorKind::InvalidIssuer));
-        }
-    }
-
     if let Some(ref correct_sub) = options.sub {
-        if let Some(sub) = claims.get("sub") {
-            if from_value::<String>(sub.clone())? != *correct_sub {
+        if let Some(Value::String(sub)) = claims.get("sub") {
+            if sub != correct_sub {
                 return Err(new_error(ErrorKind::InvalidSubject));
             }
         } else {
@@ -145,17 +147,28 @@ pub fn validate(claims: &Map<String, Value>, options: &Validation) -> Result<()>
         }
     }
 
+    if let Some(ref correct_iss) = options.iss {
+        if let Some(Value::String(iss)) = claims.get("iss") {
+            if !correct_iss.contains(iss) {
+                return Err(new_error(ErrorKind::InvalidIssuer));
+            }
+        } else {
+            return Err(new_error(ErrorKind::InvalidIssuer));
+        }
+    }
+
     if let Some(ref correct_aud) = options.aud {
         if let Some(aud) = claims.get("aud") {
             match aud {
-                Value::String(aud_found) => {
-                    if !correct_aud.contains(aud_found) {
+                Value::String(aud) => {
+                    if !correct_aud.contains(aud) {
                         return Err(new_error(ErrorKind::InvalidAudience));
                     }
                 }
                 Value::Array(_) => {
-                    let provided_aud: HashSet<String> = from_value(aud.clone())?;
-                    if provided_aud.intersection(correct_aud).count() == 0 {
+                    use serde::Deserialize;
+                    let aud = HashSet::<String>::deserialize(aud)?;
+                    if aud.intersection(correct_aud).next().is_none() {
                         return Err(new_error(ErrorKind::InvalidAudience));
                     }
                 }
@@ -263,11 +276,11 @@ mod tests {
     fn iss_ok() {
         let mut claims = Map::new();
         claims.insert("iss".to_string(), to_value("Keats").unwrap());
-        let validation = Validation {
-            validate_exp: false,
-            iss: Some("Keats".to_string()),
-            ..Default::default()
-        };
+
+        let mut iss = std::collections::HashSet::new();
+        iss.insert("Keats".to_string());
+
+        let validation = Validation { validate_exp: false, iss: Some(iss), ..Default::default() };
         let res = validate(&claims, &validation);
         assert!(res.is_ok());
     }
@@ -276,11 +289,11 @@ mod tests {
     fn iss_not_matching_fails() {
         let mut claims = Map::new();
         claims.insert("iss".to_string(), to_value("Hacked").unwrap());
-        let validation = Validation {
-            validate_exp: false,
-            iss: Some("Keats".to_string()),
-            ..Default::default()
-        };
+
+        let mut iss = std::collections::HashSet::new();
+        iss.insert("Keats".to_string());
+
+        let validation = Validation { validate_exp: false, iss: Some(iss), ..Default::default() };
         let res = validate(&claims, &validation);
         assert!(res.is_err());
 
@@ -293,11 +306,11 @@ mod tests {
     #[test]
     fn iss_missing_fails() {
         let claims = Map::new();
-        let validation = Validation {
-            validate_exp: false,
-            iss: Some("Keats".to_string()),
-            ..Default::default()
-        };
+
+        let mut iss = std::collections::HashSet::new();
+        iss.insert("Keats".to_string());
+
+        let validation = Validation { validate_exp: false, iss: Some(iss), ..Default::default() };
         let res = validate(&claims, &validation);
         assert!(res.is_err());
 
@@ -421,13 +434,18 @@ mod tests {
 
     // https://github.com/Keats/jsonwebtoken/issues/51
     #[test]
+    #[should_panic]
     fn does_validation_in_right_order() {
         let mut claims = Map::new();
         claims.insert("exp".to_string(), to_value(get_current_timestamp() + 10000).unwrap());
+
+        let mut iss = std::collections::HashSet::new();
+        iss.insert("iss no check".to_string());
+
         let v = Validation {
             leeway: 5,
             validate_exp: true,
-            iss: Some("iss no check".to_string()),
+            iss: Some(iss),
             sub: Some("sub no check".to_string()),
             ..Validation::default()
         };

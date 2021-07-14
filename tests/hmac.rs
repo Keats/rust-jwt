@@ -17,7 +17,7 @@ pub struct Claims {
 #[test]
 fn sign_hs256() {
     let result =
-        sign("hello world", &EncodingKey::from_secret(b"secret"), Algorithm::HS256).unwrap();
+        sign(b"hello world", &EncodingKey::from_secret(b"secret"), Algorithm::HS256).unwrap();
     let expected = "c0zGLzKEFWj0VxWuufTXiRMk5tlI5MbGDAYhzaxIYjo";
     assert_eq!(result, expected);
 }
@@ -25,8 +25,8 @@ fn sign_hs256() {
 #[test]
 fn verify_hs256() {
     let sig = "c0zGLzKEFWj0VxWuufTXiRMk5tlI5MbGDAYhzaxIYjo";
-    let valid =
-        verify(sig, "hello world", &DecodingKey::from_secret(b"secret"), Algorithm::HS256).unwrap();
+    let valid = verify(sig, b"hello world", &DecodingKey::from_secret(b"secret"), Algorithm::HS256)
+        .unwrap();
     assert!(valid);
 }
 
@@ -37,8 +37,7 @@ fn encode_with_custom_header() {
         company: "ACME".to_string(),
         exp: Utc::now().timestamp() + 10000,
     };
-    let mut header = Header::default();
-    header.kid = Some("kid".to_string());
+    let header = Header { kid: Some("kid".to_string()), ..Default::default() };
     let token = encode(&header, &my_claims, &EncodingKey::from_secret(b"secret")).unwrap();
     let token_data =
         decode::<Claims>(&token, &DecodingKey::from_secret(b"secret"), &Validation::default())

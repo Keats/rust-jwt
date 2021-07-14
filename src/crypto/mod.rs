@@ -8,28 +8,31 @@ use crate::errors::Result;
 use crate::serialization::{b64_decode, b64_encode};
 
 pub(crate) mod ecdsa;
+pub(crate) mod eddsa;
 pub(crate) mod rsa;
 
 /// The actual HS signing + encoding
 /// Could be in its own file to match RSA/EC but it's 2 lines...
-pub(crate) fn sign_hmac(alg: hmac::Algorithm, key: &[u8], message: &str) -> Result<String> {
-    let digest = hmac::sign(&hmac::Key::new(alg, key), message.as_bytes());
-    Ok(b64_encode(digest.as_ref()))
+pub(crate) fn sign_hmac(alg: hmac::Algorithm, key: &[u8], message: &[u8]) -> String {
+    let digest = hmac::sign(&hmac::Key::new(alg, key), message);
+    b64_encode(digest)
 }
 
 /// Take the payload of a JWT, sign it using the algorithm given and return
 /// the base64 url safe encoded of the result.
 ///
 /// If you just want to encode a JWT, use `encode` instead.
-pub fn sign(message: &str, key: &EncodingKey, algorithm: Algorithm) -> Result<String> {
+pub fn sign(message: &[u8], key: &EncodingKey, algorithm: Algorithm) -> Result<String> {
     match algorithm {
-        Algorithm::HS256 => sign_hmac(hmac::HMAC_SHA256, key.inner(), message),
-        Algorithm::HS384 => sign_hmac(hmac::HMAC_SHA384, key.inner(), message),
-        Algorithm::HS512 => sign_hmac(hmac::HMAC_SHA512, key.inner(), message),
+        Algorithm::HS256 => Ok(sign_hmac(hmac::HMAC_SHA256, key.inner(), message)),
+        Algorithm::HS384 => Ok(sign_hmac(hmac::HMAC_SHA384, key.inner(), message)),
+        Algorithm::HS512 => Ok(sign_hmac(hmac::HMAC_SHA512, key.inner(), message)),
 
         Algorithm::ES256 | Algorithm::ES384 => {
             ecdsa::sign(ecdsa::alg_to_ec_signing(algorithm), key.inner(), message)
         }
+
+        Algorithm::EdDSA => eddsa::sign(key.inner(), message),
 
         Algorithm::RS256
         | Algorithm::RS384
@@ -44,12 +47,12 @@ pub fn sign(message: &str, key: &EncodingKey, algorithm: Algorithm) -> Result<St
 fn verify_ring(
     alg: &'static dyn signature::VerificationAlgorithm,
     signature: &str,
-    message: &str,
+    message: &[u8],
     key: &[u8],
 ) -> Result<bool> {
     let signature_bytes = b64_decode(signature)?;
     let public_key = signature::UnparsedPublicKey::new(alg, key);
-    let res = public_key.verify(message.as_bytes(), &signature_bytes);
+    let res = public_key.verify(message, &signature_bytes);
 
     Ok(res.is_ok())
 }
@@ -64,7 +67,7 @@ fn verify_ring(
 /// `message` is base64(header) + "." + base64(claims)
 pub fn verify(
     signature: &str,
-    message: &str,
+    message: &[u8],
     key: &DecodingKey,
     algorithm: Algorithm,
 ) -> Result<bool> {
@@ -76,6 +79,12 @@ pub fn verify(
         }
         Algorithm::ES256 | Algorithm::ES384 => verify_ring(
             ecdsa::alg_to_ec_verification(algorithm),
+            signature,
+            message,
+            key.as_bytes(),
+        ),
+        Algorithm::EdDSA => verify_ring(
+            eddsa::alg_to_ec_verification(algorithm),
             signature,
             message,
             key.as_bytes(),

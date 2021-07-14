@@ -1,3 +1,5 @@
+use std::result;
+
 use serde::{Deserialize, Serialize};
 
 use crate::algorithms::Algorithm;
@@ -37,6 +39,11 @@ pub struct Header {
     /// Defined in [RFC7515#4.1.5](https://tools.ietf.org/html/rfc7515#section-4.1.5).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub x5u: Option<String>,
+    /// X.509 certificate chain. A Vec of base64 encoded ASN.1 DER certificates.
+    ///
+    /// Defined in [RFC7515#4.1.6](https://tools.ietf.org/html/rfc7515#section-4.1.6).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x5c: Option<Vec<String>>,
     /// X.509 certificate thumbprint
     ///
     /// Defined in [RFC7515#4.1.7](https://tools.ietf.org/html/rfc7515#section-4.1.7).
@@ -54,16 +61,24 @@ impl Header {
             jku: None,
             kid: None,
             x5u: None,
+            x5c: None,
             x5t: None,
         }
     }
 
     /// Converts an encoded part into the Header struct if possible
-    pub(crate) fn from_encoded(encoded_part: &str) -> Result<Self> {
+    pub(crate) fn from_encoded<T: AsRef<[u8]>>(encoded_part: T) -> Result<Self> {
         let decoded = b64_decode(encoded_part)?;
-        let s = String::from_utf8(decoded)?;
+        Ok(serde_json::from_slice(&decoded)?)
+    }
 
-        Ok(serde_json::from_str(&s)?)
+    /// Decodes the X.509 certificate chain into ASN.1 DER format.
+    pub fn x5c_der(&self) -> Result<Option<Vec<Vec<u8>>>> {
+        Ok(self
+            .x5c
+            .as_ref()
+            .map(|b64_certs| b64_certs.iter().map(base64::decode).collect::<result::Result<_, _>>())
+            .transpose()?)
     }
 }
 

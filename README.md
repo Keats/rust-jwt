@@ -169,7 +169,7 @@ struct Validation {
     pub validate_exp: bool,             // Default: true
     pub validate_nbf: bool,             // Default: false
     pub aud: Option<HashSet<String>>,   // Default: None
-    pub iss: Option<String>,            // Default: None
+    pub iss: Option<HashSet<String>>,   // Default: None
     pub sub: Option<String>,            // Default: None
     pub algorithms: Vec<Algorithm>,     // Default: vec![Algorithm::HS256]
 }
@@ -185,7 +185,9 @@ let validation = Validation::new(Algorithm::HS512);
 // Adding some leeway (in seconds) for exp and nbf checks
 let mut validation = Validation {leeway: 60, ..Default::default()};
 // Checking issuer
-let mut validation = Validation {iss: Some("issuer".to_string()), ..Default::default()};
+let mut iss = std::collections::HashSet::new();
+iss.insert("issuer".to_string());
+let mut validation = Validation {iss: Some(iss), ..Default::default()};
 // Setting audience
 let mut validation = Validation::default();
 validation.set_audience(&"Me"); // string
@@ -193,3 +195,18 @@ validation.set_audience(&["Me", "You"]); // array of strings
 ```
 
 Look at `examples/validation.rs` for a full working example.
+
+## Generating Epileptic Curve Key Pairs
+There are many ways to generate a key (pair), to encode, and subsequently decode, a JWT.
+One of the simplest ways is to use the `openssl` command line utility.
+
+Generate an EC private-key, and convert it to a valid pkcs8 formatted key.
+```
+openssl ecparam -name secp384r1 -genkey -noout -out private-key-sec1.pem
+openssl pkcs8 -topk8 -in private-key-sec1.pem -nocrypt -out private-key-pkcs8.pem
+```
+
+Generate an EC public-key, derived from the previously generated private key.
+```
+openssl ec -in keys/private-key.pem -pubout -out keys/public-key.pem
+```

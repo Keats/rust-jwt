@@ -41,7 +41,9 @@ pub enum ErrorKind {
     /// When the secret given is not a valid ECDSA key
     InvalidEcdsaKey,
     /// When the secret given is not a valid RSA key
-    InvalidRsaKey,
+    InvalidRsaKey(&'static str),
+    /// We could not sign with the given key
+    RsaFailedSigning,
     /// When the algorithm from string doesn't match the one passed to `from_str`
     InvalidAlgorithmName,
     /// When a key is provided with an invalid format
@@ -61,6 +63,8 @@ pub enum ErrorKind {
     /// When the algorithm in the header doesn't match the one passed to `decode` or the encoding/decoding key
     /// used doesn't match the alg requested
     InvalidAlgorithm,
+    /// When the Validation struct does not contain at least 1 algorithm
+    MissingAlgorithm,
 
     // 3rd party errors
     /// An error happened when decoding some base64 text
@@ -79,8 +83,10 @@ impl StdError for Error {
             ErrorKind::InvalidToken => None,
             ErrorKind::InvalidSignature => None,
             ErrorKind::InvalidEcdsaKey => None,
-            ErrorKind::InvalidRsaKey => None,
+            ErrorKind::RsaFailedSigning => None,
+            ErrorKind::InvalidRsaKey(_) => None,
             ErrorKind::ExpiredSignature => None,
+            ErrorKind::MissingAlgorithm => None,
             ErrorKind::InvalidIssuer => None,
             ErrorKind::InvalidAudience => None,
             ErrorKind::InvalidSubject => None,
@@ -102,8 +108,9 @@ impl fmt::Display for Error {
             ErrorKind::InvalidToken
             | ErrorKind::InvalidSignature
             | ErrorKind::InvalidEcdsaKey
-            | ErrorKind::InvalidRsaKey
             | ErrorKind::ExpiredSignature
+            | ErrorKind::RsaFailedSigning
+            | ErrorKind::MissingAlgorithm
             | ErrorKind::InvalidIssuer
             | ErrorKind::InvalidAudience
             | ErrorKind::InvalidSubject
@@ -111,11 +118,18 @@ impl fmt::Display for Error {
             | ErrorKind::InvalidAlgorithm
             | ErrorKind::InvalidKeyFormat
             | ErrorKind::InvalidAlgorithmName => write!(f, "{:?}", self.0),
+            ErrorKind::InvalidRsaKey(ref msg) => write!(f, "RSA key invalid: {}", msg),
             ErrorKind::Json(ref err) => write!(f, "JSON error: {}", err),
             ErrorKind::Utf8(ref err) => write!(f, "UTF-8 error: {}", err),
             ErrorKind::Crypto(ref err) => write!(f, "Crypto error: {}", err),
             ErrorKind::Base64(ref err) => write!(f, "Base64 error: {}", err),
         }
+    }
+}
+
+impl PartialEq for ErrorKind {
+    fn eq(&self, other: &Self) -> bool {
+        format!("{:?}", self) == format!("{:?}", other)
     }
 }
 
